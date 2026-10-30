@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review Mood: IMDB sentiment analysis</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=Source+Serif+4:ital@0;1&display=swap">
+<style>
+:root {
+  --bg: #eef1f6; --panel: #ffffff; --ink: #1b2433; --muted: #5d6b82; --line: #d5dbe6;
+  --pos: #1f7a5c; --pos-bg: #d9f0e7; --neg: #b4343f; --neg-bg: #f8dde0; --accent: #1b2433;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121826; --panel: #1a2234; --ink: #e8edf6; --muted: #92a0b8; --line: #2b3550;
+    --pos: #5fd1a5; --pos-bg: #173a30; --neg: #f08590; --neg-bg: #44212a; --accent: #e8edf6;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif; line-height: 1.6;
+}
+main { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
+h1, h2, button, .badge, .verdict {
+  font-family: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+}
+h1 { font-size: clamp(2rem, 6vw, 3.2rem); line-height: 1.05; margin: 0 0 12px; font-weight: 800; }
+.lead { color: var(--muted); margin: 0 0 32px; max-width: 56ch; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+textarea {
+  width: 100%; min-height: 150px; resize: vertical; border: 1px solid var(--line);
+  border-radius: 8px; padding: 14px; font: inherit; color: var(--ink); background: var(--bg);
+}
+textarea:focus, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+button {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border-radius: 8px; padding: 9px 14px; font-weight: 500; font-size: .95rem; cursor: pointer;
+}
+button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+button.sample { font-size: .85rem; padding: 6px 10px; color: var(--muted); }
+.spacer { flex: 1; }
+#result { margin-top: 24px; display: none; }
+.verdict { font-size: 1.9rem; font-weight: 800; margin: 0; }
+.verdict.pos { color: var(--pos); } .verdict.neg { color: var(--neg); }
+.meter { position: relative; height: 14px; border-radius: 7px; margin: 14px 0 6px;
+  background: linear-gradient(90deg, var(--neg-bg), var(--line) 50%, var(--pos-bg)); }
+.meter i { position: absolute; top: -4px; width: 4px; height: 22px; border-radius: 2px;
+  background: var(--accent); transform: translateX(-50%); transition: left .4s ease; }
+.scale { display: flex; justify-content: space-between; font-size: .85rem; color: var(--muted); }
+h2 { font-size: 1.05rem; margin: 26px 0 8px; }
+.words { display: flex; flex-wrap: wrap; gap: 6px; }
+.word { padding: 3px 10px; border-radius: 999px; font-size: .92rem; }
+.word.pos { background: var(--pos-bg); color: var(--pos); }
+.word.neg { background: var(--neg-bg); color: var(--neg); }
+.note { margin-top: 20px; font-size: .88rem; color: var(--muted); }
+.badge { display: inline-block; font-size: .8rem; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="badge" id="modelBadge">Loading model…</div>
+  <h1>Is this movie review positive or negative?</h1>
+  <p class="lead">Paste a review and the model reads it the way it learned from 25,000 labelled IMDB reviews.</p>
+
+  <section class="panel">
+    <label for="review" class="sr" style="display:none">Movie review</label>
+    <textarea id="review" placeholder="Type or paste a movie review here…"></textarea>
+    <div class="row">
+      <button class="primary" id="go">Analyze review</button>
+      <button id="clear">Clear</button>
+      <span class="spacer"></span>
+      <button class="sample" data-s="0">Try a rave</button>
+      <button class="sample" data-s="1">Try a pan</button>
+      <button class="sample" data-s="2">Try a mixed one</button>
+    </div>
+
+    <div id="result" aria-live="polite">
+      <p class="verdict" id="verdict"></p>
+      <div class="meter"><i id="needle"></i></div>
+      <div class="scale"><span>Negative</span><span id="pct"></span><span>Positive</span></div>
+      <h2>Words that pushed it positive</h2>
+      <div class="words" id="posWords"></div>
+      <h2>Words that pushed it negative</h2>
+      <div class="words" id="negWords"></div>
+    </div>
+  </section>
+
+  <p class="note" id="note"></p>
+</main>
+
+<!-- Created by train_model.py. If it is missing, a small built-in word list is used instead. -->
+<script src="model.js" onerror="void 0"></script>
+<script>
+const SAMPLES = [
+  "A beautiful, moving film. The acting was superb and the story kept me hooked from start to finish. I loved every minute.",
+  "Boring and predictable. The plot made no sense, the dialogue was awful, and I wasted two hours. Not worth watching.",
+  "The visuals are great but the script is weak. Some scenes were brilliant, others were dull and badly written."
+];
+
+// Fallback word list, used only when model.js has not been generated yet.
+const POS = "great excellent amazing wonderful beautiful brilliant superb love loved loves best fantastic perfect enjoyable moving hooked masterpiece funny touching favorite fun good".split(" ");
+const NEG = "bad awful terrible boring worst waste dull poor weak horrible hate hated stupid predictable disappointing mess annoying pathetic lame badly".split(" ");
+const NOT = new Set(["not", "no", "never", "n't", "hardly", "isn't", "wasn't", "don't", "didn't", "can't"]);
+
+const M = window.SENTIMENT_MODEL || null;
+const $ = id => document.getElementById(id);
+
+function tokenize(text) {
+  return text.toLowerCase().replace(/<br\s*\/?>/g, " ").match(/[a-z']+/g) || [];
+}
+
+// Returns { z, contribs: [[word, score], ...] } where z > 0 means positive.
+function scoreWithModel(tokens) {
+  const counts = {};
+  tokens.forEach(t => { if (M.vocab[t]) counts[t] = (counts[t] || 0) + 1; });
+  const vals = {};
+  let norm = 0;
+  for (const w in counts) {
+    const v = (1 + Math.log(counts[w])) * M.vocab[w][0];
+    vals[w] = v; norm += v * v;
+  }
+  norm = Math.sqrt(norm) || 1;
+  let z = M.bias;
+  const contribs = [];
+  for (const w in vals) {
+    const c = M.vocab[w][1] * vals[w] / norm;
+    z += c; contribs.push([w, c]);
+  }
+  return { z, contribs };
+}
+
+function scoreWithLexicon(tokens) {
+  let z = 0;
+  const contribs = [];
+  tokens.forEach((t, i) => {
+    let s = POS.includes(t) ? 1 : NEG.includes(t) ? -1 : 0;
+    if (!s) return;
+    const prev = tokens.slice(Math.max(0, i - 2), i);
+    if (prev.some(p => NOT.has(p))) s = -s;
+    z += s; contribs.push([t, s]);
+  });
+  return { z: z * 0.9, contribs };
+}
+
+function analyze() {
+  const text = $("review").value.trim();
+  if (!text) { $("review").focus(); return; }
+  const tokens = tokenize(text);
+  const { z, contribs } = M ? scoreWithModel(tokens) : scoreWithLexicon(tokens);
+  const p = 1 / (1 + Math.exp(-z));
+  const positive = p >= 0.5;
+
+  $("result").style.display = "block";
+  $("verdict").textContent = positive ? "Positive review" : "Negative review";
+  $("verdict").className = "verdict " + (positive ? "pos" : "neg");
+  $("needle").style.left = (p * 100).toFixed(1) + "%";
+  $("pct").textContent = Math.round((positive ? p : 1 - p) * 100) + "% confident";
+
+  const top = (arr) => arr.slice(0, 10);
+  const pos = top(contribs.filter(c => c[1] > 0).sort((a, b) => b[1] - a[1]));
+  const neg = top(contribs.filter(c => c[1] < 0).sort((a, b) => a[1] - b[1]));
+  fill("posWords", pos, "pos"); fill("negWords", neg, "neg");
+}
+
+function fill(id, list, cls) {
+  const el = $(id);
+  el.textContent = "";
+  if (!list.length) { el.textContent = "None found."; return; }
+  list.forEach(([w]) => {
+    const s = document.createElement("span");
+    s.className = "word " + cls; s.textContent = w; el.appendChild(s);
+  });
+}
+
+$("go").onclick = analyze;
+$("clear").onclick = () => { $("review").value = ""; $("result").style.display = "none"; $("review").focus(); };
+document.querySelectorAll(".sample").forEach(b => b.onclick = () => { $("review").value = SAMPLES[b.dataset.s]; analyze(); });
+$("review").addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") analyze(); });
+
+if (M) {
+  $("modelBadge").textContent = "Model trained on IMDB · " + (M.accuracy * 100).toFixed(1) + "% test accuracy";
+  $("note").textContent = "Trained on " + M.train_size.toLocaleString() + " reviews using " + M.features.toLocaleString() + " word features. Everything runs in your browser.";
+} else {
+  $("modelBadge").textContent = "Demo mode: simple word list";
+  $("note").textContent = "model.js was not found. Run train_model.py to train on the IMDB dataset, then reload this page.";
+}
+</script>
+</body>
+</html>
